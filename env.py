@@ -1,9 +1,10 @@
 import cv2
 import numpy as np
 import torch
+from apple_collector import AppleCollector
 
 
-GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2', 'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2', 'Walker2d-v2']
+GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2', 'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2', 'Walker2d-v2', 'Apple']
 CONTROL_SUITE_ENVS = ['cartpole-balance', 'cartpole-swingup', 'reacher-easy', 'finger-spin', 'cheetah-run', 'ball_in_cup-catch', 'walker-walk']
 CONTROL_SUITE_ACTION_REPEATS = {'cartpole': 8, 'reacher': 4, 'finger': 2, 'cheetah': 4, 'ball_in_cup': 6, 'walker': 2}
 
@@ -97,9 +98,13 @@ class GymEnv():
     import gym
     gym.logger.set_level(logging.ERROR)  # Ignore warnings from Gym logger
     self.symbolic = symbolic
-    self._env = gym.make(env)
+    if env == "Apple":
+      self._env = AppleCollector()
+      self.max_episode_length = self._env.max_episode_steps
+    else:
+      self._env = gym.make(env)
+      self.max_episode_length = max_episode_length
     self._env.seed(seed)
-    self.max_episode_length = max_episode_length
     self.action_repeat = action_repeat
     self.bit_depth = bit_depth
 
