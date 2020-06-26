@@ -152,10 +152,16 @@ class GymEnv():
 
   @property
   def action_range(self):
+    # TODO: Hack for apple action space 
+    if type(self._env) == AppleCollector:
+      return 0, 3
     return float(self._env.action_space.low[0]), float(self._env.action_space.high[0])
 
   # Sample an action randomly from a uniform distribution over all valid actions
   def sample_random_action(self):
+    # TODO: Hack for apple action space 
+    if type(self._env) == AppleCollector:
+      return torch.from_numpy(np.array([self._env.action_space.sample()]))
     return torch.from_numpy(self._env.action_space.sample())
 
 
