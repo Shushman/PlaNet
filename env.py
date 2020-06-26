@@ -144,7 +144,11 @@ class GymEnv():
 
   @property
   def action_size(self):
-    return self._env.action_space.shape[0]
+    # TODO: Hack for apple action space 
+    if type(self._env) == AppleCollector:
+      return self._env.action_space.n
+    else:
+      return self._env.action_space.shape[0]
 
   @property
   def action_range(self):
