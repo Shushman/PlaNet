@@ -20,8 +20,12 @@ def postprocess_observation(observation, bit_depth):
   return np.clip(np.floor((observation + 0.5) * 2 ** bit_depth) * 2 ** (8 - bit_depth), 0, 2 ** 8 - 1).astype(np.uint8)
 
 
-def _images_to_observation(images, bit_depth):
-  images = torch.tensor(cv2.resize(images, (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32)  # Resize and put channel first
+def _images_to_observation(env, images, bit_depth):
+  # TODO: Yet another hack for apple
+  if type(env) == AppleCollector:
+    images = torch.tensor(cv2.resize(images, (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 1, 0), dtype=torch.float32)  # Resize and put channel first
+  else:
+    images = torch.tensor(cv2.resize(images, (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32)
   preprocess_observation_(images, bit_depth)  # Quantise, centre and dequantise inplace
   return images.unsqueeze(dim=0)  # Add batch dimension
 
@@ -47,7 +51,7 @@ class ControlSuiteEnv():
     if self.symbolic:
       return torch.tensor(np.concatenate([np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
     else:
-      return _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
+      return _images_to_observation(self._env, self._env.physics.render(camera_id=0), self.bit_depth)
 
   def step(self, action):
     action = action.detach().numpy()
@@ -62,7 +66,7 @@ class ControlSuiteEnv():
     if self.symbolic:
       observation = torch.tensor(np.concatenate([np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
     else:
-      observation = _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
+      observation = _images_to_observation(self._env, self._env.physics.render(camera_id=0), self.bit_depth)
     return observation, reward, done
 
   def render(self):
@@ -114,7 +118,10 @@ class GymEnv():
     if self.symbolic:
       return torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
     else:
-      return _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
+      if type(self._env) == AppleCollector:
+        return _images_to_observation(self._env, state, self.bit_depth)
+        # return torch.tensor(state, dtype=torch.uint8).unsqueeze(dim=0)
+      return _images_to_observation(self._env, self._env.render(mode='rgb_array'), self.bit_depth)
   
   def step(self, action):
     action = action.detach().numpy()
@@ -129,7 +136,13 @@ class GymEnv():
     if self.symbolic:
       observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
     else:
-      observation = _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
+      if type(self._env) == AppleCollector:
+        # from IPython import embed
+        # embed()
+        observation = _images_to_observation(self._env, state, self.bit_depth)
+        # observation = torch.tensor(state, dtype=torch.uint8).unsqueeze(dim=0)
+      else:
+        observation = _images_to_observation(self._env, self._env.render(mode='rgb_array'), self.bit_depth)
     return observation, reward, done
 
   def render(self):
@@ -146,7 +159,7 @@ class GymEnv():
   def action_size(self):
     # TODO: Hack for apple action space 
     if type(self._env) == AppleCollector:
-      return self._env.action_space.n
+      return 1
     else:
       return self._env.action_space.shape[0]
 

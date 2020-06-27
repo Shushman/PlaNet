@@ -86,7 +86,7 @@ if args.experience_replay is not '' and os.path.exists(args.experience_replay):
   D = torch.load(args.experience_replay)
   metrics['steps'], metrics['episodes'] = [D.steps] * D.episodes, list(range(1, D.episodes + 1))
 elif not args.test:
-  D = ExperienceReplay(args.experience_size, args.symbolic_env, env.observation_size, env.action_size, args.bit_depth, args.device)
+  D = ExperienceReplay(args.env, args.experience_size, args.symbolic_env, env.observation_size, env.action_size, args.bit_depth, args.device)
   # Initialise dataset D with S random seed episodes
   for s in range(1, args.seed_episodes + 1):
     observation, done, t = env.reset(), False, 0
@@ -124,6 +124,8 @@ def update_belief_and_act(args, env, planner, transition_model, encoder, belief,
   belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(observation).unsqueeze(dim=0))  # Action and observation need extra time dimension
   belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
   action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
+  from IPython import embed
+  embed()
   if explore:
     action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
   actions.clamp_(min=min_action, max=max_action)  # Clip action range

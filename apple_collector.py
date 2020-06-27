@@ -12,7 +12,7 @@ class AppleCollector(gym.Env):
     def __init__(self):
         self.size = 17
         self.action_space = spaces.Discrete(4)
-        self.observation_space = spaces.Box(low=0, high=1, shape=(3, self.size, self.size), dtype=np.uint8)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(self.size, self.size, 3), dtype=np.uint8)
         self.ax, self.ay = 0, 0
         self.green_apples = []
         self.red_apples = []
@@ -109,7 +109,7 @@ class AppleCollector(gym.Env):
             obs[1, x, y] = 1
         for x, y in self.red_apples:
             obs[2, x, y] = 1
-        return obs
+        return obs.transpose(1, 2, 0)
 
     def _initialize_canvas(self):
         self.root = tk.Tk()

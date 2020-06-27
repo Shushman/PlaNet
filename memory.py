@@ -4,8 +4,9 @@ from env import postprocess_observation, preprocess_observation_
 
 
 class ExperienceReplay():
-  def __init__(self, size, symbolic_env, observation_size, action_size, bit_depth, device):
+  def __init__(self, envname, size, symbolic_env, observation_size, action_size, bit_depth, device):
     self.device = device
+    self.envname = envname
     self.symbolic_env = symbolic_env
     self.size = size
     self.observations = np.empty((size, observation_size) if symbolic_env else (size, 3, 64, 64), dtype=np.float32 if symbolic_env else np.uint8)
@@ -21,6 +22,8 @@ class ExperienceReplay():
     if self.symbolic_env:
       self.observations[self.idx] = observation.numpy()
     else:
+      # from IPython import embed
+      # embed()
       self.observations[self.idx] = postprocess_observation(observation.numpy(), self.bit_depth)  # Decentre and discretise visual observations (to save memory)
     self.actions[self.idx] = action.numpy()
     self.rewards[self.idx] = reward

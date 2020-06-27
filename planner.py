@@ -15,6 +15,9 @@ class MPCPlanner(jit.ScriptModule):
     self.optimisation_iters = optimisation_iters
     self.candidates, self.top_candidates = candidates, top_candidates
 
+
+# TODO: Figure out how to modify for Discrete Actions!
+
   @jit.script_method
   def forward(self, belief, state):
     B, H, Z = belief.size(0), belief.size(1), state.size(1)
