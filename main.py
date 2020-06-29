@@ -12,7 +12,7 @@ from tqdm import tqdm
 from env import CONTROL_SUITE_ENVS, Env, GYM_ENVS, EnvBatcher
 from memory import ExperienceReplay
 from models import bottle, Encoder, ObservationModel, RewardModel, TransitionModel
-from planner import MPCPlanner
+from planner import MPCPlanner, DiscreteMPCPlanner
 from utils import lineplot, write_video
 
 
@@ -114,7 +114,12 @@ if args.models is not '' and os.path.exists(args.models):
   reward_model.load_state_dict(model_dicts['reward_model'])
   encoder.load_state_dict(model_dicts['encoder'])
   optimiser.load_state_dict(model_dicts['optimiser'])
-planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, reward_model, env.action_range[0], env.action_range[1])
+
+# TODO: Hack for apple; use DiscreteMPC Planner (can be generalized to Discrete ASPs?)
+if args.env == "Apple":
+  planner = DiscreteMPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, reward_model, env._env.action_space.n)
+else:
+  planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, reward_model, env.action_range[0], env.action_range[1])
 global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.device), torch.ones(args.batch_size, args.state_size, device=args.device))  # Global prior N(0, I)
 free_nats = torch.full((1, ), args.free_nats, dtype=torch.float32, device=args.device)  # Allowed deviation in KL divergence
 
