@@ -137,10 +137,7 @@ class GymEnv():
       observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
     else:
       if type(self._env) == AppleCollector:
-        # from IPython import embed
-        # embed()
         observation = _images_to_observation(self._env, state, self.bit_depth)
-        # observation = torch.tensor(state, dtype=torch.uint8).unsqueeze(dim=0)
       else:
         observation = _images_to_observation(self._env, self._env.render(mode='rgb_array'), self.bit_depth)
     return observation, reward, done
