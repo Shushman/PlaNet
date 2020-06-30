@@ -87,7 +87,7 @@ class ControlSuiteEnv():
 
   @property
   def action_range(self):
-    return float(self._env.action_spec().minimum[0]), float(self._env.action_spec().maximum[0]) 
+    raise NotImplementedError
 
   # Sample an action randomly from a uniform distribution over all valid actions
   def sample_random_action(self):
