@@ -1,10 +1,9 @@
 import cv2
 import numpy as np
 import torch
-from apple_collector import AppleCollector
 
 
-GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2', 'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2', 'Walker2d-v2', 'Apple']
+GYM_ENVS = ['Pendulum-v0', 'MountainCarContinuous-v0', 'Ant-v2', 'HalfCheetah-v2', 'Hopper-v2', 'Humanoid-v2', 'HumanoidStandup-v2', 'InvertedDoublePendulum-v2', 'InvertedPendulum-v2', 'Reacher-v2', 'Swimmer-v2', 'Walker2d-v2']
 CONTROL_SUITE_ENVS = ['cartpole-balance', 'cartpole-swingup', 'reacher-easy', 'finger-spin', 'cheetah-run', 'ball_in_cup-catch', 'walker-walk']
 CONTROL_SUITE_ACTION_REPEATS = {'cartpole': 8, 'reacher': 4, 'finger': 2, 'cheetah': 4, 'ball_in_cup': 6, 'walker': 2}
 
@@ -20,12 +19,8 @@ def postprocess_observation(observation, bit_depth):
   return np.clip(np.floor((observation + 0.5) * 2 ** bit_depth) * 2 ** (8 - bit_depth), 0, 2 ** 8 - 1).astype(np.uint8)
 
 
-def _images_to_observation(env, images, bit_depth):
-  # TODO: Yet another hack for apple
-  if type(env) == AppleCollector:
-    images = torch.tensor(cv2.resize(images, (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 1, 0), dtype=torch.float32)  # Resize and put channel first
-  else:
-    images = torch.tensor(cv2.resize(images, (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32)
+def _images_to_observation(images, bit_depth):
+  images = torch.tensor(cv2.resize(images, (64, 64), interpolation=cv2.INTER_LINEAR).transpose(2, 0, 1), dtype=torch.float32)  # Resize and put channel first
   preprocess_observation_(images, bit_depth)  # Quantise, centre and dequantise inplace
   return images.unsqueeze(dim=0)  # Add batch dimension
 
@@ -51,7 +46,7 @@ class ControlSuiteEnv():
     if self.symbolic:
       return torch.tensor(np.concatenate([np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
     else:
-      return _images_to_observation(self._env, self._env.physics.render(camera_id=0), self.bit_depth)
+      return _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
 
   def step(self, action):
     action = action.detach().numpy()
@@ -66,7 +61,7 @@ class ControlSuiteEnv():
     if self.symbolic:
       observation = torch.tensor(np.concatenate([np.asarray([obs]) if isinstance(obs, float) else obs for obs in state.observation.values()], axis=0), dtype=torch.float32).unsqueeze(dim=0)
     else:
-      observation = _images_to_observation(self._env, self._env.physics.render(camera_id=0), self.bit_depth)
+      observation = _images_to_observation(self._env.physics.render(camera_id=0), self.bit_depth)
     return observation, reward, done
 
   def render(self):
@@ -87,7 +82,7 @@ class ControlSuiteEnv():
 
   @property
   def action_range(self):
-    raise NotImplementedError
+    return float(self._env.action_spec().minimum[0]), float(self._env.action_spec().maximum[0]) 
 
   # Sample an action randomly from a uniform distribution over all valid actions
   def sample_random_action(self):
@@ -102,13 +97,9 @@ class GymEnv():
     import gym
     gym.logger.set_level(logging.ERROR)  # Ignore warnings from Gym logger
     self.symbolic = symbolic
-    if env == "Apple":
-      self._env = AppleCollector()
-      self.max_episode_length = self._env.max_episode_steps
-    else:
-      self._env = gym.make(env)
-      self.max_episode_length = max_episode_length
+    self._env = gym.make(env)
     self._env.seed(seed)
+    self.max_episode_length = max_episode_length
     self.action_repeat = action_repeat
     self.bit_depth = bit_depth
 
@@ -118,10 +109,7 @@ class GymEnv():
     if self.symbolic:
       return torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
     else:
-      if type(self._env) == AppleCollector:
-        return _images_to_observation(self._env, state, self.bit_depth)
-        # return torch.tensor(state, dtype=torch.uint8).unsqueeze(dim=0)
-      return _images_to_observation(self._env, self._env.render(mode='rgb_array'), self.bit_depth)
+      return _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
   
   def step(self, action):
     action = action.detach().numpy()
@@ -136,13 +124,7 @@ class GymEnv():
     if self.symbolic:
       observation = torch.tensor(state, dtype=torch.float32).unsqueeze(dim=0)
     else:
-      if type(self._env) == AppleCollector:
-        # from IPython import embed
-        # embed()
-        observation = _images_to_observation(self._env, state, self.bit_depth)
-        # observation = torch.tensor(state, dtype=torch.uint8).unsqueeze(dim=0)
-      else:
-        observation = _images_to_observation(self._env, self._env.render(mode='rgb_array'), self.bit_depth)
+      observation = _images_to_observation(self._env.render(mode='rgb_array'), self.bit_depth)
     return observation, reward, done
 
   def render(self):
@@ -157,24 +139,14 @@ class GymEnv():
 
   @property
   def action_size(self):
-    # TODO: Hack for apple action space 
-    if type(self._env) == AppleCollector:
-      return 1
-    else:
-      return self._env.action_space.shape[0]
+    return self._env.action_space.shape[0]
 
   @property
   def action_range(self):
-    # TODO: Hack for apple action space 
-    if type(self._env) == AppleCollector:
-      return 0, 3
     return float(self._env.action_space.low[0]), float(self._env.action_space.high[0])
 
   # Sample an action randomly from a uniform distribution over all valid actions
   def sample_random_action(self):
-    # TODO: Hack for apple action space 
-    if type(self._env) == AppleCollector:
-      return torch.from_numpy(np.array([self._env.action_space.sample()]))
     return torch.from_numpy(self._env.action_space.sample())
 
 
