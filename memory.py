@@ -49,3 +49,31 @@ class ExperienceReplay():
   def sample(self, n, L):
     batch = self._retrieve_batch(np.asarray([self._sample_idx(L) for _ in range(n)]), n, L)
     return [torch.as_tensor(item).to(device=self.device) for item in batch]
+
+
+  # Hierarchical sampling; first sample a point at random from the full buffer
+  # Then collect the data within that episode and sample again
+  def _sample_idx_episode(self, L):
+    valid_idx = False
+    while not valid_idx:
+      # Sample from full buffer at random
+      idx = np.random.randint(0, self.size if self.full else self.idx - L)
+
+      # Set off on both sides until you reach terminal on either side
+      ep_start = idx
+      ep_end = idx
+      while ep_start > 0 and self.nonterminals[ep_start - 1] != 0.0:
+        ep_start -= 1
+      while ep_end < self.size and self.nonterminals[ep_end] != 0.0:
+        ep_end += 1
+      
+      # Now sample from within episode start to episode end
+      idx = np.random.randint(ep_start, min(ep_end+1, self.size) - L)
+      idxs = np.arange(idx, idx + L)
+      valid_idx = not self.idx in idxs[1:]  # Make sure data does not cross the memory index
+
+    return idxs
+  
+  def sample_episode(self, n, L):
+    batch = self._retrieve_batch(np.asarray([self._sample_idx_episode(L) for _ in range(n)]), n, L)
+    return [torch.as_tensor(item).to(device=self.device) for item in batch]

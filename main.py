@@ -162,7 +162,11 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
   losses = []
   for s in tqdm(range(args.collect_interval)):
     # Draw sequence chunks {(o_t, a_t, r_t+1, terminal_t+1)} ~ D uniformly at random from the dataset (including terminal flags)
-    observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size)  # Transitions start at time t = 0
+    
+    if args.env in FAN_ENVMAP.keys():
+      observations, actions, rewards, nonterminals = D.sample_episode(args.batch_size, args.chunk_size)
+    else:
+      observations, actions, rewards, nonterminals = D.sample(args.batch_size, args.chunk_size)  # Transitions start at time t = 0
     # Create initial belief and state for time t = 0
     init_belief, init_state = torch.zeros(args.batch_size, args.belief_size, device=args.device), torch.zeros(args.batch_size, args.state_size, device=args.device)
     # Update belief/state using posterior from previous belief/state, previous action and current observation (over entire sequence at once)
