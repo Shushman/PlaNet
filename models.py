@@ -114,7 +114,10 @@ def ObservationModel(symbolic, observation_size, belief_size, state_size, embedd
   else:
     return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
 
-
+# TODO SC: Normal reward + Aux reward model
+# Normal model accepts z as input
+# Visual encoder output replaces model.cnn
+# Input to auxnet are encoded state AND reward from previous timestep
 class RewardModel(jit.ScriptModule):
   def __init__(self, belief_size, state_size, hidden_size, activation_function='relu'):
     super().__init__()
@@ -129,7 +132,76 @@ class RewardModel(jit.ScriptModule):
     hidden = self.act_fn(self.fc2(hidden))
     reward = self.fc3(hidden).squeeze(dim=1)
     return reward
+  
+class FANRewardModel(jit.ScriptModule):
+  def __init__(self, belief_size, state_size, hidden_size, activation_function='relu'):
+    super().__init__()
+    self.act_fn = getattr(F, activation_function)
+    self.fc1 = nn.Linear(belief_size + state_size, hidden_size)
+    self.fc2 = nn.Linear(hidden_size, hidden_size)
+    self.fc3 = nn.Linear(hidden_size, 1)
+  
+  # Implements forward so aux net can call it
+  def output(self, belief, state, z=None):
+    hidden = self.act_fn(self.fc1(torch.cat([belief, state], dim=1)))
+    hidden = self.act_fn(self.fc2(hidden))
+    
+    # TODO SC: Now apply z across hidden (or earlier?)
+    if z is not None:
+      hidden *= z.unsqueeze(0).expand_as(hidden)
+    
+    # Finally get reward as a function of z also
+    reward = self.fc3(hidden).squeeze(dim=1)
+    return reward
 
+  @jit.script_method
+  def forward(self, belief, state, z=None):
+    return self.output(self, belief, state, z)
+
+# TODO SC: Check parameters to class; FC sizes; Embedding; hardcoded activations
+class FANAuxRewardModel(jit.ScriptModule):
+  def __init__(self, batch_size, belief_size, state_size, hidden_size):
+    super().__init__()
+
+    # TODO: Is the next line correct for regression
+    self.embed = nn.Embedding(1, belief_size+state_size)
+    self.fc1 = nn.Linear(2*(belief_size+state_size), belief+state_size)
+    self.fc2 = nn.Linear(batch_size*(belief_size+state_size), hidden_size)
+  
+  @jit.script_method
+  def forward(self, belief, state, y):
+    y = self.embed(y)
+    z = torch.cat([belief, state, y], dim=1)
+    z = self.fc1(z)
+    z = F.relu(z)
+    z = self.fc2(z.view(-1))
+    z = F.tanh(z)
+    return z
+
+# Don't need to encode data as higher level has already encoded it
+def aux_step(model, aux_model, aux_optimizer, beliefs, states, target):
+  aux_optimizer.zero_grad()
+  z = aux_model(beliefs, states, target)
+  output = model.output(beliefs, states, z)
+  loss = F.nll_loss(output, target)
+  loss.backward()
+  aux_optimizer.step()
+  return z, loss.item()
+
+
+def fit_aux(model, aux_model, aux_optimizer, beliefs, states, target, old_aux_loss):
+  aux_loss_delta = 1.
+  steps = 0
+
+  while aux_loss_delta > 0.01:
+    steps += 1
+    z, aux_loss = aux_step(model, aux_model, aux_optimizer, beliefs, states, target)
+
+    if old_aux_loss is not None:
+      aux_loss_delta = old_aux_loss - aux_loss
+    old_aux_loss = aux_loss
+
+    return z, aux_loss, steps
 
 class SymbolicEncoder(jit.ScriptModule):
   def __init__(self, observation_size, embedding_size, activation_function='relu'):

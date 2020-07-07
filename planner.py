@@ -16,8 +16,8 @@ class MPCPlanner(jit.ScriptModule):
     self.candidates, self.top_candidates = candidates, top_candidates
 
   @jit.script_method
-  def forward(self, belief, state):
-    B, H, Z = belief.size(0), belief.size(1), state.size(1)
+  def forward(self, belief, state, z=None):
+    B, H, Z, ZZ = belief.size(0), belief.size(1), state.size(1), z.size(1)
     belief, state = belief.unsqueeze(dim=1).expand(B, self.candidates, H).reshape(-1, H), state.unsqueeze(dim=1).expand(B, self.candidates, Z).reshape(-1, Z)
     # Initialize factorized belief over action sequences q(a_t:t+H) ~ N(0, I)
     action_mean, action_std_dev = torch.zeros(self.planning_horizon, B, 1, self.action_size, device=belief.device), torch.ones(self.planning_horizon, B, 1, self.action_size, device=belief.device)
@@ -28,7 +28,12 @@ class MPCPlanner(jit.ScriptModule):
       # Sample next states
       beliefs, states, _, _ = self.transition_model(state, actions, belief)
       # Calculate expected returns (technically sum of rewards over planning horizon)
-      returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z)).view(self.planning_horizon, -1).sum(dim=0)
+      
+      # TODO SC: Should we condition on z here?
+      if z is not None:
+        returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z), z.view(-1, ZZ)).view(self.planning_horizon, -1).sum(dim=0)
+      else:
+        returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z)).view(self.planning_horizon, -1).sum(dim=0)
       # Re-fit belief to the K best action sequences
       _, topk = returns.reshape(B, self.candidates).topk(self.top_candidates, dim=1, largest=True, sorted=False)
       topk += self.candidates * torch.arange(0, B, dtype=torch.int64, device=topk.device).unsqueeze(dim=1)  # Fix indices for unrolled actions
