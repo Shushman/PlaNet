@@ -114,7 +114,6 @@ def ObservationModel(symbolic, observation_size, belief_size, state_size, embedd
   else:
     return VisualObservationModel(belief_size, state_size, embedding_size, activation_function)
 
-# TODO SC: Normal reward + Aux reward model
 # Normal model accepts z as input
 # Visual encoder output replaces model.cnn
 # Input to auxnet are encoded state AND reward from previous timestep
@@ -133,7 +132,7 @@ class RewardModel(jit.ScriptModule):
     reward = self.fc3(hidden).squeeze(dim=1)
     return reward
   
-class FANRewardModel(jit.ScriptModule):
+class FANRewardModel(nn.Module):
   def __init__(self, belief_size, state_size, hidden_size, activation_function='relu'):
     super().__init__()
     self.act_fn = getattr(F, activation_function)
@@ -142,33 +141,34 @@ class FANRewardModel(jit.ScriptModule):
     self.fc3 = nn.Linear(hidden_size, 1)
   
   # Implements forward so aux net can call it
+  # @jit.script_method
   def output(self, belief, state, z=None):
     hidden = self.act_fn(self.fc1(torch.cat([belief, state], dim=1)))
     hidden = self.act_fn(self.fc2(hidden))
     
-    # TODO SC: Now apply z across hidden (or earlier?)
-    if z is not None:
-      hidden *= z.unsqueeze(0).expand_as(hidden)
+    # Put embed and check dimensions
+    if type(z) != type(None):
+      hidden *= z.expand_as(hidden)
     
     # Finally get reward as a function of z also
     reward = self.fc3(hidden).squeeze(dim=1)
     return reward
 
-  @jit.script_method
+  # @jit.script_method
   def forward(self, belief, state, z=None):
-    return self.output(self, belief, state, z)
+    return self.output(belief, state, z)
 
 # TODO SC: Check parameters to class; FC sizes; Embedding; hardcoded activations
-class FANAuxRewardModel(jit.ScriptModule):
-  def __init__(self, batch_size, belief_size, state_size, hidden_size):
+class FANAuxRewardModel(nn.Module):
+  def __init__(self, chunk_size, batch_size, belief_size, state_size, hidden_size):
     super().__init__()
+    self.chunk_size = chunk_size
+    self.batch_size = batch_size
 
-    # TODO: Is the next line correct for regression
-    self.embed = nn.Embedding(1, belief_size+state_size)
-    self.fc1 = nn.Linear(2*(belief_size+state_size), belief+state_size)
-    self.fc2 = nn.Linear(batch_size*(belief_size+state_size), hidden_size)
+    self.embed = nn.Linear(1, belief_size+state_size)
+    self.fc1 = nn.Linear(2*(belief_size+state_size), belief_size+state_size)
+    self.fc2 = nn.Linear((chunk_size-1)*batch_size*(belief_size+state_size), hidden_size)
   
-  @jit.script_method
   def forward(self, belief, state, y):
     y = self.embed(y)
     z = torch.cat([belief, state, y], dim=1)
@@ -176,14 +176,21 @@ class FANAuxRewardModel(jit.ScriptModule):
     z = F.relu(z)
     z = self.fc2(z.view(-1))
     z = F.tanh(z)
+
+    # TODO: Bottle expects 2450 along dim 0
+    z = z.unsqueeze(0).repeat((self.chunk_size-1)*self.batch_size, 1)
+
     return z
 
 # Don't need to encode data as higher level has already encoded it
 def aux_step(model, aux_model, aux_optimizer, beliefs, states, target):
   aux_optimizer.zero_grad()
-  z = aux_model(beliefs, states, target)
-  output = model.output(beliefs, states, z)
-  loss = F.nll_loss(output, target)
+  z = bottle(aux_model, (beliefs, states, target))
+  output = bottle(model.output, (beliefs, states, z))
+  t_unsqueezed = torch.squeeze(target, dim=2)
+  # from IPython import embed
+  # embed()
+  loss = F.mse_loss(output, t_unsqueezed)
   loss.backward()
   aux_optimizer.step()
   return z, loss.item()

@@ -75,6 +75,7 @@ torch.manual_seed(args.seed)
 if torch.cuda.is_available() and not args.disable_cuda:
   args.device = torch.device('cuda')
   torch.cuda.manual_seed(args.seed)
+  torch.cuda.empty_cache()
 else:
   args.device = torch.device('cpu')
 metrics = {'steps': [], 'episodes': [], 'train_rewards': [], 'test_episodes': [], 'test_rewards': [], 'observation_loss': [], 'reward_loss': [], 'kl_loss': []}
@@ -108,7 +109,7 @@ encoder = Encoder(args.symbolic_env, env.observation_size, args.embedding_size, 
 # NOTE: Different reward model for FAN
 if args.env in FAN_ENVMAP.keys():
   fan_reward_model = FANRewardModel(args.belief_size, args.state_size, args.hidden_size, args.activation_function).to(device=args.device)
-  fan_aux_reward_model = FANAuxRewardModel(args.batch_size, args.belief_size, args.state_size, args.hidden_size).to(device=args.device)
+  fan_aux_reward_model = FANAuxRewardModel(args.chunk_size, args.batch_size, args.belief_size, args.state_size, args.hidden_size).to(device=args.device)
   param_list = list(transition_model.parameters()) + list(observation_model.parameters()) + list(fan_reward_model.parameters()) + list(encoder.parameters())
   aux_optimiser = optim.Adam(fan_aux_reward_model.parameters(), lr=0 if args.learning_rate_schedule != 0 else args.learning_rate, eps=args.adam_epsilon)
   planner = MPCPlanner(env.action_size, args.planning_horizon, args.optimisation_iters, args.candidates, args.top_candidates, transition_model, fan_reward_model, env.action_range[0], env.action_range[1])
@@ -128,17 +129,16 @@ if args.models is not '' and os.path.exists(args.models):
   reward_model.load_state_dict(model_dicts['reward_model'])
   encoder.load_state_dict(model_dicts['encoder'])
   optimiser.load_state_dict(model_dicts['optimiser'])
-
-# TODO: 
+ 
 global_prior = Normal(torch.zeros(args.batch_size, args.state_size, device=args.device), torch.ones(args.batch_size, args.state_size, device=args.device))  # Global prior N(0, I)
 free_nats = torch.full((1, ), args.free_nats, dtype=torch.float32, device=args.device)  # Allowed deviation in KL divergence
 
 
-def update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation, min_action=-inf, max_action=inf, explore=False):
+def update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation, min_action=-inf, max_action=inf, explore=False, z=None):
   # Infer belief over current state q(s_t|o≤t,a<t) from the history
   belief, _, _, _, posterior_state, _, _ = transition_model(posterior_state, action.unsqueeze(dim=0), belief, encoder(observation).unsqueeze(dim=0))  # Action and observation need extra time dimension
   belief, posterior_state = belief.squeeze(dim=0), posterior_state.squeeze(dim=0)  # Remove time dimension from belief/state
-  action = planner(belief, posterior_state)  # Get action from planner(q(s_t|o≤t,a<t), p)
+  action = planner(belief, posterior_state, z)  # Get action from planner(q(s_t|o≤t,a<t), p)
   if explore:
     action = action + args.action_noise * torch.randn_like(action)  # Add exploration noise ε ~ p(ε) to the action
   actions.clamp_(min=min_action, max=max_action)  # Clip action range
@@ -174,7 +174,7 @@ if args.test:
   env.close()
   quit()
 
-
+torch.autograd.set_detect_anomaly(True)
 # Training (and testing)
 for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total=args.episodes, initial=metrics['episodes'][-1] + 1):
   # Model fitting
@@ -194,14 +194,11 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     # Calculate observation likelihood, reward likelihood and KL losses (for t = 0 only for latent overshooting); sum over final dims, average over batch and time (original implementation, though paper seems to miss 1/T scaling?)
     observation_loss = F.mse_loss(bottle(observation_model, (beliefs, posterior_states)), observations[1:], reduction='none').sum(dim=2 if args.symbolic_env else (2, 3, 4)).mean(dim=(0, 1))
     
-    
-    # TODO SC: Edit here for reward FAN
     if args.env in FAN_ENVMAP.keys():
-      reward_loss = F.mse_loss(bottle(fan_reward_model, (beliefs, posterior_states, z)), rewards[:-1], reduction='none').mean(dim=(0, 1))
-      
-      # TODO : What's the right way to send x_(t-1) and r_(t-1) vector here?
-      z, aux_loss, aux_steps = fit_aux(fan_reward_model, fan_aux_reward_model, aux_optimiser, beliefs, prior_states, rewards[:-1])
-      z = z.detach() 
+      if type(z) != type(None):
+        reward_loss = F.mse_loss(bottle(fan_reward_model, (beliefs, posterior_states, z)), rewards[:-1], reduction='none').mean(dim=(0, 1))
+      else:
+        reward_loss = F.mse_loss(bottle(fan_reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0, 1))
     else:
       reward_loss = F.mse_loss(bottle(reward_model, (beliefs, posterior_states)), rewards[:-1], reduction='none').mean(dim=(0, 1))
     
@@ -226,7 +223,10 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
       # Calculate overshooting reward prediction loss with sequence mask
       if args.overshooting_reward_scale != 0:
         if args.env in FAN_ENVMAP.keys():
-          reward_loss += (1 / args.overshooting_distance) * args.overshooting_reward_scale * F.mse_loss(bottle(fan_reward_model, (beliefs, prior_states)) * seq_mask[:, :, 0], torch.cat(overshooting_vars[2], dim=1), reduction='none').mean(dim=(0, 1)) * (args.chunk_size - 1) 
+          if type(z) != type(None):
+            reward_loss += (1 / args.overshooting_distance) * args.overshooting_reward_scale * F.mse_loss(bottle(fan_reward_model, (beliefs, prior_states, z)) * seq_mask[:, :, 0], torch.cat(overshooting_vars[2], dim=1), reduction='none').mean(dim=(0, 1)) * (args.chunk_size - 1)
+          else:
+             reward_loss += (1 / args.overshooting_distance) * args.overshooting_reward_scale * F.mse_loss(bottle(fan_reward_model, (beliefs, prior_states)) * seq_mask[:, :, 0], torch.cat(overshooting_vars[2], dim=1), reduction='none').mean(dim=(0, 1)) * (args.chunk_size - 1)
         else:
           reward_loss += (1 / args.overshooting_distance) * args.overshooting_reward_scale * F.mse_loss(bottle(reward_model, (beliefs, prior_states)) * seq_mask[:, :, 0], torch.cat(overshooting_vars[2], dim=1), reduction='none').mean(dim=(0, 1)) * (args.chunk_size - 1)  # Update reward loss (compensating for extra average over each overshooting/open loop sequence) 
 
@@ -236,9 +236,14 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
         group['lr'] = min(group['lr'] + args.learning_rate / args.learning_rate_schedule, args.learning_rate)
     # Update model parameters
     optimiser.zero_grad()
-    (observation_loss + reward_loss + kl_loss).backward()
+    (observation_loss + reward_loss + kl_loss).backward(retain_graph=True)
     nn.utils.clip_grad_norm_(param_list, args.grad_clip_norm, norm_type=2)
     optimiser.step()
+
+    if args.env in FAN_ENVMAP.keys():
+      target = torch.unsqueeze(rewards[:-1], 2)
+      z, aux_loss, aux_steps = fit_aux(fan_reward_model, fan_aux_reward_model, aux_optimiser, beliefs, posterior_states, target, aux_loss)
+      z = z.detach() 
     # Store (0) observation loss (1) reward loss (2) KL loss
     losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item()])
 
@@ -258,7 +263,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
     belief, posterior_state, action = torch.zeros(1, args.belief_size, device=args.device), torch.zeros(1, args.state_size, device=args.device), torch.zeros(1, env.action_size, device=args.device)
     pbar = tqdm(range(args.max_episode_length // args.action_repeat))
     for t in pbar:
-      belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), env.action_range[0], env.action_range[1], explore=True)
+      belief, posterior_state, action, next_observation, reward, done = update_belief_and_act(args, env, planner, transition_model, encoder, belief, posterior_state, action, observation.to(device=args.device), env.action_range[0], env.action_range[1], explore=True, z=z)
       D.append(observation, action.cpu(), reward, done)
       total_reward += reward
       observation = next_observation

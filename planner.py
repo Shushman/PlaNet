@@ -1,10 +1,10 @@
 from math import inf
 import torch
-from torch import jit
+from torch import jit, nn
 
 
 # Model-predictive control planner with cross-entropy method and learned transition model
-class MPCPlanner(jit.ScriptModule):
+class MPCPlanner(nn.Module):
   __constants__ = ['action_size', 'planning_horizon', 'optimisation_iters', 'candidates', 'top_candidates', 'min_action', 'max_action']
 
   def __init__(self, action_size, planning_horizon, optimisation_iters, candidates, top_candidates, transition_model, reward_model, min_action=-inf, max_action=inf):
@@ -15,9 +15,9 @@ class MPCPlanner(jit.ScriptModule):
     self.optimisation_iters = optimisation_iters
     self.candidates, self.top_candidates = candidates, top_candidates
 
-  @jit.script_method
+
   def forward(self, belief, state, z=None):
-    B, H, Z, ZZ = belief.size(0), belief.size(1), state.size(1), z.size(1)
+    B, H, Z = belief.size(0), belief.size(1), state.size(1)
     belief, state = belief.unsqueeze(dim=1).expand(B, self.candidates, H).reshape(-1, H), state.unsqueeze(dim=1).expand(B, self.candidates, Z).reshape(-1, Z)
     # Initialize factorized belief over action sequences q(a_t:t+H) ~ N(0, I)
     action_mean, action_std_dev = torch.zeros(self.planning_horizon, B, 1, self.action_size, device=belief.device), torch.ones(self.planning_horizon, B, 1, self.action_size, device=belief.device)
@@ -29,9 +29,10 @@ class MPCPlanner(jit.ScriptModule):
       beliefs, states, _, _ = self.transition_model(state, actions, belief)
       # Calculate expected returns (technically sum of rewards over planning horizon)
       
-      # TODO SC: Should we condition on z here?
-      if z is not None:
-        returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z), z.view(-1, ZZ)).view(self.planning_horizon, -1).sum(dim=0)
+      if type(z) != type(None):
+        from IPython import embed
+        embed()
+        returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z), z.view(-1, z.size(1))).view(self.planning_horizon, -1).sum(dim=0)
       else:
         returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z)).view(self.planning_horizon, -1).sum(dim=0)
       # Re-fit belief to the K best action sequences
