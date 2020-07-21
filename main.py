@@ -242,7 +242,7 @@ for episode in tqdm(range(metrics['episodes'][-1] + 1, args.episodes + 1), total
 
     if args.env in FAN_ENVMAP.keys():
       target = torch.unsqueeze(rewards[:-1], 2)
-      z, aux_loss, aux_steps = fit_aux(fan_reward_model, fan_aux_reward_model, aux_optimiser, beliefs, posterior_states, target, aux_loss)
+      z, aux_loss, aux_steps = fit_aux(fan_reward_model, fan_aux_reward_model, aux_optimiser, beliefs.detach(), posterior_states.detach(), target, aux_loss)
       z = z.detach() 
     # Store (0) observation loss (1) reward loss (2) KL loss
     losses.append([observation_loss.item(), reward_loss.item(), kl_loss.item()])
