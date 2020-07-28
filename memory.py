@@ -74,6 +74,7 @@ class ExperienceReplay():
 
     return idxs
   
+  # TODO: Ensure that BATCH has chunks all from the same latent configuration
   def sample_episode(self, n, L):
     batch = self._retrieve_batch(np.asarray([self._sample_idx_episode(L) for _ in range(n)]), n, L)
     return [torch.as_tensor(item).to(device=self.device) for item in batch]

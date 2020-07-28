@@ -30,9 +30,8 @@ class MPCPlanner(nn.Module):
       # Calculate expected returns (technically sum of rewards over planning horizon)
       
       if type(z) != type(None):
-        from IPython import embed
-        embed()
-        returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z), z.view(-1, z.size(1))).view(self.planning_horizon, -1).sum(dim=0)
+        zt =  z[0, 0, :].unsqueeze(0).repeat(beliefs.shape[0]*beliefs.shape[1], 1)
+        returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z), zt).view(self.planning_horizon, -1).sum(dim=0)
       else:
         returns = self.reward_model(beliefs.view(-1, H), states.view(-1, Z)).view(self.planning_horizon, -1).sum(dim=0)
       # Re-fit belief to the K best action sequences
